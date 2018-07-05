@@ -1,0 +1,567 @@
+<html style="margin: 0; padding: 0">
+	<head>
+		<meta charset="utf-8">
+		<!-- Latest compiled and minified CSS -->
+		<link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/css/bootstrap.min.css" integrity="sha384-BVYiiSIFeK1dGmJRAkycuHAHRg32OmUcww7on3RYdg4Va+PmSTsz/K68vbdEjh4u" crossorigin="anonymous">
+
+		<!-- Optional theme -->
+		<link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/css/bootstrap-theme.min.css" integrity="sha384-rHyoN1iRsVXV4nD0JutlnGaslCJuC7uwjduW9SVrLvRYooPp2bWYgmgJQIXwl/Sp" crossorigin="anonymous">
+
+		<!-- Latest compiled and minified JavaScript -->
+		<script src="https://cdn.jsdelivr.net/g/lodash@4.3.0,handlebarsjs@4.0.5,jquery@2.2.0,momentjs@2.9.0,bootstrap@2.3.2"></script>
+		<script type="text/javascript" src="https://www.directcallsoft.com/api/app/zendesk/jquery.md5.js"></script>
+		<script type="text/javascript" src="https://assets.zendesk.com/apps/sdk/2.0/zaf_sdk.js"></script>
+
+		<script>
+            // Initialise the Zendesk JavaScript API client
+            // https://developer.zendesk.com/apps/docs/apps-v2
+            var client = ZAFClient.init();
+            var ticketInstance;
+            var dataTicket = {};
+            var call_uuid_csf;
+            var agent_info;
+
+
+            client.on('app.registered', function() {
+                getKey('login').then(function(login) {
+                    if(login != null){
+                        showAppDC();
+                    }else{
+                        $('.login-stage').show();
+                        console.log('ok');
+                        client.invoke('resize', { width: '250px', height: '300px' });
+                    }
+                });
+
+                var fetchSelf = {
+                    url: '/api/v2/users/me.json',
+                    type: 'GET',
+                    dataType: 'json'
+                };
+                client.request(fetchSelf).then(function(data) {
+                    agent_info = data;
+                });
+            });
+
+            /**
+             * Instacia BACKGROUND
+             */
+            var backgroundClientPromise = client.get('instances').then(function(instancesData) {
+                var instances = instancesData.instances;
+                for (var instanceGuid in instances) {
+                    if (instances[instanceGuid].location === 'background') {
+                        return client.instance(instanceGuid);
+                    }
+                }
+            });
+
+            /**
+             * Instacia TICKET SIDE
+             */
+            var ticketBarClientPromise = client.get('instances').then(function(instancesData) {
+                var instances = instancesData.instances;
+                for (var instanceGuid in instances) {
+                    if (instances[instanceGuid].location === 'ticket_sidebar') {
+                        ticketInstance = client.instance(instanceGuid);
+                        loadInfoTicket();
+                        return ticketInstance;
+                    }
+                }
+            });
+
+
+
+            //Preenche o app com os dados do ticket
+            loadInfoTicket = function(){
+
+                // handle ticket_sidebar instances created after the background instance loaded
+                client.get('instances').then(function(data) {
+                    var instanceGuids = Object.keys(data.instances);
+                    console.log(instanceGuids);
+                    Object.keys(data.instances).forEach(function(instanceGuid) {
+                        if (data.instances[instanceGuid].location === 'ticket_sidebar') {
+                            ticketInstance = client.instance(instanceGuid);
+                        }
+                        if (data.instances[instanceGuid].location === 'top_bar') {
+                            topInstance = client.instance(instanceGuid);
+                        }
+                    });
+
+
+                    if(typeof ticketInstance!== 'undefined'){
+                        ticketInstance.get([
+                            'currentUser.name',
+                            'ticket.requester.id',
+                            'ticket.requester.name'
+                        ]).then(function(data) {
+                            var _ticket = {
+                                url: '/api/v2/users/' + data["ticket.requester.id"] + '/identities.json',
+                                dataType: 'json',
+                                type: 'GET'
+                            };
+
+                            client.request(_ticket).then(function(response){
+                                $.each(response.identities, function( index, value ) {
+                                    if(value.type == "phone_number"){
+                                        console.log(data);
+                                        //$('.appdc-stage')[0].contentWindow.postMessage("1|chamar|"+value.value+"|"+data["ticket.requester.name"], "*");
+                                        $('.appdc-stage')[0].contentWindow.postMessage("1|chamar|" + value.value + "|" + data["ticket.requester.id"] + "|" + data["ticket.requester.name"] + "|ZENDESK", "*");
+                                        //.comando("1|chamar|" + numero_cab + "|" + id_ticket_cab + "|" + nome_cliente_cab + "|ZENDESK" );
+                                    }
+                                });
+                            });
+                        });
+                    }
+                });
+            }
+
+            client.on('pane.activated', function(e){
+                //if(ticketInstance){
+                loadInfoTicket();
+                showAppDC();
+                //}
+            });
+
+            //Chamada Recebida
+            client.on('call_destroy', function(e) {
+                showAppDC();
+                insertCommentTicket('falha', dataTicket);
+            });
+
+            //Chamada Recebida
+            client.on('call_bye', function(e) {
+                showAppDC();
+            });
+
+            client.on('call_rejected', function(e) {
+                dataTicket = e;
+                csf('rejeitar');
+            });
+
+            //Chamada Recebida
+            client.on('call_in', function(e) {
+                client.invoke('popover');
+
+
+                // websip
+                $('#csf-atender').show();
+                $('#csf-rejeitar').show();
+                $('#csf-rejeitar').html('Rejeitar');
+
+                if(e.type == 2){
+                    $('#csf-voicemail').hide();
+                }else{
+                    $('#csf-voicemail').show();
+                }
+
+                $('.login-stage').hide();
+                $('.appdc-stage').hide();
+                $('.callin-stage').show();
+                client.invoke('resize', { width: '320px', height: '280px' });
+                populateDateCallIn(e);
+                dataTicket = e;
+                insertCommentTicket('nova', e);
+
+            });
+
+            insertCommentTicket = function(tipo, data){
+
+                var texto = null;
+                if(data.ultimo_ticket !== undefined) {
+                    switch (tipo) {
+                        case "nova" :
+                        {
+                            texto = "Nova chamada do numero " + data.telefone;
+                        }
+                            break;
+
+                        case "falha" :
+                        {
+                            texto = "Chamada do numero " + data.telefone + " em " + getStringDate() + " sem atendimento";
+                        }
+                            break;
+
+                        case "atender" :
+                        {
+                            texto = "Chamada do numero " + data.telefone + " foi atendida.";
+                        }
+                            break;
+
+                        case "rejeitar" :
+                        {
+                            //texto = "Olá, a chamada do número " + data.telefone + " foi rejeitada.";
+                            texto = "Chamada do numero " + data.telefone + " em " + getStringDate() + " sem atendimento";
+                        }
+                            break;
+
+                        case "voicemail" :
+                        {
+                            texto = "Chamada do numero " + data.telefone + " foi encaminhada para o correio de voz.";
+                        }
+                            break;
+                    }
+
+                    var comment_ticket = {
+                        url: '/api/v2/tickets/' + data.ultimo_ticket + '.json',
+                        dataType: 'json',
+                        type: 'PUT',
+                        data: {"ticket": {"comment": {"body": texto, "author_id": data.id}}}
+                    };
+
+                    client.request(comment_ticket).then(function (response) {
+                        console.log('Gravado comentario');
+                    });
+                }
+
+            }
+
+            populateDateCallIn = function(e){
+                call_uuid_csf = e.call_uuid;
+                //Nome
+                if(Object.keys(e.nome).length > 0){
+                    $('#d-contato').html(e.nome);
+                }else{
+                    $('#d-contato').html('{{Contato}}');
+                }
+
+                //Numero
+                if(Object.keys(e.telefone).length > 0){
+                    $('#d-numero').html(e.telefone);
+                }else{
+                    $('#d-numero').html('{{Numero}}');
+                }
+
+                //E-mail
+                if(e.email !== null){
+                    $('#d-email').html(e.email);
+                }else{
+                    $('#d-email').html('E-mail: N/A');
+                }
+
+                //Ultimo ticket
+                if(e.data_ticket !== null){
+                    $('#d-ultimo_ticket').html('&Uacute;ltima intera&ccedil;&atilde;o: ' + parseDateString(e.data_ticket));
+                }else{
+                    $('#d-ultimo_ticket').html('&Uacute;ltima intera&ccedil;&atilde;o: N/A');
+                }
+
+                //Link ticket
+                if(e.ultimo_ticket !== undefined){
+                    $('#d-link').show();
+                    $('#d-link').unbind( "click" ).click(function(){
+                        var open_ticket = {
+                            url: '/api/v2/channels/voice/agents/' + agent_info.user.id + '/tickets/' + e.ultimo_ticket + '/display.json',
+                            dataType: 'json',
+                            type: 'POST',
+                        };
+                        client.request(open_ticket).then(function (response) {
+                            console.log(['Ticket open', response]);
+                            csf('atender');
+                        });
+                    });
+                }else{
+                    $('#d-link').show();
+                    $('#d-link').unbind( "click" ).click(function(){
+                        if(e.id == "") {
+                            createTicket(e.atendedor, e.telefone, "");
+                        }else{
+                            createTicket(e.atendedor, e.telefone, e.id);
+                        }
+                    });
+                }
+
+            }
+
+            openTicket = function(id, agent)
+            {
+                var open_ticket = {
+                    url: '/api/v2/channels/voice/agents/' + agent_info.user.id + '/tickets/' + id + '/display.json',
+                    dataType: 'json',
+                    type: 'POST',
+                };
+                client.request(open_ticket).then(function (response) {
+                    console.log(['Ticket open', response]);
+                });
+            }
+
+            createTicket = function(agent, phone, user){
+                if(user != "") {
+                    var ticket = {
+                        display_to_agent: agent_info.user.id ,
+                        ticket: {
+                            via_id: 45,
+                            subject: "Chamada recebida - " + phone,
+                            priority: "urgent",
+                            assignee_id: agent_info.user.id,
+                            requester_id: user,
+                            comment: {
+                                body: "Nova chamada recebida em " + getStringDate() + " de " + phone
+                            }
+                        }
+                    };
+                }else{
+                    var ticket = {
+                        display_to_agent: agent_info.user.id ,
+                        ticket: {
+                            via_id: 45,
+                            assignee_id: agent_info.user.id,
+                            subject: "Chamada recebida - " + phone,
+                            priority: "urgent",
+                            comment: {
+                                body: "Nova chamada recebida em " + getStringDate() + " de " + phone
+                            }
+                        }
+                    };
+                }
+
+                var api_ticket = {
+                    url: '/api/v2/channels/voice/tickets.json',
+                    dataType: 'json',
+                    type: 'POST',
+                    data: ticket
+                };
+
+                client.request(api_ticket).then(function (response) {
+                    console.log(['Ticket criado', response]);
+                    openTicket(response.ticket.id, response.ticket.assignee_id);
+                    csf('atender');
+                });
+            }
+
+            /**
+             * CSF
+             */
+            csf = function(action){
+
+                if(dataTicket.type == 1) {
+                    backgroundClientPromise.then(function (backgroundClient) {
+                        backgroundClient.trigger('DC_call_status', {});
+                    });
+
+                    var to;
+                    getKey('origem').then(function (to) {
+                        var settings = {
+                            url: 'https://www.directcallsoft.com/api/app/zendesk/fsmon/index.php',
+                            type: 'POST',
+                            data: {call_uuid: call_uuid_csf, action: action, to: to}
+                        };
+                        client.request(settings).then(function (response) {
+                            client.invoke('popover', 'hide');
+                            client.invoke('notify', 'Directcall Call In: + OK');
+                            showAppDC();
+                            insertCommentTicket(action, dataTicket);
+                        });
+                    });
+                }else{
+                    backgroundClientPromise.then(function(backgroundClient) {
+                        backgroundClient.trigger('DC_callinsip', {action: action});
+                    });
+
+                    if(action == "atender"){
+                        $('#csf-atender').hide();
+                        $('#csf-voicemail').hide();
+                        $('#csf-rejeitar').html('Finalizar Chamada');
+                        insertCommentTicket(action, dataTicket);
+					}else{
+                        client.invoke('popover', 'hide');
+                        client.invoke('notify', 'Directcall Call In: + OK');
+                        showAppDC();
+					}
+                }
+            }
+
+            // Retorno do login
+            client.on('DC_login', function(e) {
+                if(e.status == true){
+                    setKey('login', $.md5(e.login + e.password));
+                    setKey('_uuida', Base64.encode(e.login));
+                    setKey('_uuidb', Base64.encode(e.password));
+                    setKey('access_token', e.access_token);
+                    $('.login-stage').hide();
+                    showAppDC();
+                }else{
+                    if(e.codigo == 0){
+                        client.invoke('resize', { width: '250px', height: '280px' });
+                        $('.alert-login').show().html('Usu&aacute;rio ou senha inv&aacute;lidos!');
+                    }else{
+                        client.invoke('resize', { width: '280px', height: '280px' });
+                        $('.alert-login').show().html('Problemas de comunica&ccedil;&atilde;o! Tente novamente.');
+                    }
+                }
+            });
+
+            /**
+             * Functions
+             */
+
+            getStringDate = function()
+            {
+                var now = new Date;
+                return now.getDate() + '/' + now.getMonth() + '/' + now.getFullYear() + ' as ' + now.getHours() + ':' + now.getMinutes();
+            }
+
+            parseDateString = function(date)
+            {
+                return new Date(date).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
+
+            }
+
+            setKey = function(key, val) {
+                return client.metadata().then(function(metadata) {
+                    return localStorage.setItem(metadata.installationId + ":" + key, val);
+                });
+            }
+
+            getKey = function(key) {
+                return client.metadata().then(function(metadata) {
+                    return localStorage.getItem(metadata.installationId + ":" + key);
+                });
+            }
+
+            showAppDC = function(){
+                var user;
+                var pass;
+                var orig;
+                $('.login-stage').hide();
+                $('.callin-stage').hide();
+                getKey('_uuida').then(function(login) {
+                    user =  Base64.decode(login);
+                    getKey('_uuidb').then(function(password) {
+                        pass =  Base64.decode(password);
+                        getKey('origem').then(function(origem) {
+                            orig = origem;
+                            $('.appdc-stage')[0].contentWindow.postMessage("0|login|"+user+"|"+pass+"|"+orig, "*");
+                            $('.appdc-stage').show();
+                            client.invoke('resize', { width: '270px', height: '380px' });
+                        });
+                    });
+                });
+
+            }
+
+
+            /**
+             * Action
+             */
+            $(document).ready(function() {
+                $('#login-action').submit(function(e){
+                    e.preventDefault();
+                    backgroundClientPromise.then(function(backgroundClient) {
+                        var _login = $('#client_id').val();
+                        var _password = $('#client_secret').val();
+                        setKey('origem', $('#origem').val());
+                        backgroundClient.trigger('DC_checkLogin', {login:_login, password:_password});
+                    });
+                    return false;
+                })
+            });
+
+            // Create Base64 Object
+            var Base64={_keyStr:"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=",encode:function(e){var t="";var n,r,i,s,o,u,a;var f=0;e=Base64._utf8_encode(e);while(f<e.length){n=e.charCodeAt(f++);r=e.charCodeAt(f++);i=e.charCodeAt(f++);s=n>>2;o=(n&3)<<4|r>>4;u=(r&15)<<2|i>>6;a=i&63;if(isNaN(r)){u=a=64}else if(isNaN(i)){a=64}t=t+this._keyStr.charAt(s)+this._keyStr.charAt(o)+this._keyStr.charAt(u)+this._keyStr.charAt(a)}return t},decode:function(e){var t="";var n,r,i;var s,o,u,a;var f=0;e=e.replace(/[^A-Za-z0-9+/=]/g,"");while(f<e.length){s=this._keyStr.indexOf(e.charAt(f++));o=this._keyStr.indexOf(e.charAt(f++));u=this._keyStr.indexOf(e.charAt(f++));a=this._keyStr.indexOf(e.charAt(f++));n=s<<2|o>>4;r=(o&15)<<4|u>>2;i=(u&3)<<6|a;t=t+String.fromCharCode(n);if(u!=64){t=t+String.fromCharCode(r)}if(a!=64){t=t+String.fromCharCode(i)}}t=Base64._utf8_decode(t);return t},_utf8_encode:function(e){e=e.replace(/rn/g,"n");var t="";for(var n=0;n<e.length;n++){var r=e.charCodeAt(n);if(r<128){t+=String.fromCharCode(r)}else if(r>127&&r<2048){t+=String.fromCharCode(r>>6|192);t+=String.fromCharCode(r&63|128)}else{t+=String.fromCharCode(r>>12|224);t+=String.fromCharCode(r>>6&63|128);t+=String.fromCharCode(r&63|128)}}return t},_utf8_decode:function(e){var t="";var n=0;var r=c1=c2=0;while(n<e.length){r=e.charCodeAt(n);if(r<128){t+=String.fromCharCode(r);n++}else if(r>191&&r<224){c2=e.charCodeAt(n+1);t+=String.fromCharCode((r&31)<<6|c2&63);n+=2}else{c2=e.charCodeAt(n+1);c3=e.charCodeAt(n+2);t+=String.fromCharCode((r&15)<<12|(c2&63)<<6|c3&63);n+=3}}return t}}
+
+            var eventMethod = window.addEventListener ? "addEventListener" : "attachEvent";
+            var eventer = window[eventMethod];
+            var messageEvent = eventMethod == "attachEvent" ? "onmessage" : "message";
+
+            eventer(messageEvent, function (e) {
+                var data = e.data;
+
+                if(typeof e.data.action !== 'undefined'){
+                    switch(e.data.action){
+                        case "status":{
+                            client.invoke('notify', e.data.msg );
+                        }break;
+                        case "open":{
+                            client.invoke('popover');
+                        }break;
+                    }
+                }
+
+                var dados = e.data;
+                if (dados.hasOwnProperty('app_directcall')) {
+                    switch(dados.action)
+                    {
+                        case "update_fone" : {
+                            setKey('origem', dados.origem );
+                        }break;
+
+                        case "sipcall" : {
+                            backgroundClientPromise.then(function(backgroundClient) {
+                                backgroundClient.trigger('DC_callsip', {number:dados.destino, client_id: $.md5(dados.client_id) });
+                            });
+                        }break;
+
+                        case "sipend" : {
+                            backgroundClientPromise.then(function(backgroundClient) {
+                                backgroundClient.trigger('DC_sipend', {});
+                            });
+                        }break;
+
+                    }
+                }
+
+            }, false);
+
+            // Funcao debug
+            debug = function(obj) {
+                if (window.console && window.console.log) {
+                    window.console.log(obj);
+                }
+            };
+		</script>
+	</head>
+<body style="margin: 0; padding: 0; overflow: hidden;">
+
+  	<p></p>
+
+  	<!-- LOGIN -->
+	<div class="container-fluid login-stage" style="display: none">
+  		<div class="row">
+  		 <div class="col-md-1">
+  		 	<div class="alert alert-warning alert-login" role="alert" style="display: none"></div>
+			<form id="login-action">
+			  <div class="form-group">
+			    <label for="origem">Tel. de atendimento</label>
+			    <input type="number" class="form-control" id="origem" placeholder="Tel. de atendimento">
+			  </div>
+			  <div class="form-group">
+			    <label for="client_id">Usuario</label>
+			    <input type="email" class="form-control" id="client_id" placeholder="E-mail">
+			  </div>
+			  <div class="form-group">
+			    <label for="client_secret">Senha</label>
+			    <input type="password" class="form-control" id="client_secret" placeholder="Senha">
+			  </div>
+			  <button type="submit" class="btn btn-default">Entrar</button>
+			</form>
+		</div>
+		</div>
+	</div>
+
+	<!-- CALL IN -->
+	<div class="container-fluid callin-stage" style="display: none">
+  		<div class="row">
+  		 <div class="col-md-1">
+  		 	<div class="alert alert-warning alert-login" role="alert" style="display: none"></div>
+			<form id="login-action">
+			  <div class="form-group">
+			    <h3><small>Recebendo chamada:</small></h3>
+			    <h2 id="d-contato">{{Contato}}</h2>
+			    <h4 id="d-numero">{{Numero}}</h4>
+			    <h5 id="d-email">{{Email}}</h5>
+			    <p id="d-ultimo_ticket">{{Data da ultima interacao}}</p>
+			    <p><a id="d-link" href="#">Atender e abrir Novo Ticket</a></p>
+			  </div>
+			  <button type="button" id="csf-atender" onclick="csf('atender')" class="btn btn-success">Atender</button>
+			  <button type="button" id="csf-voicemail" onclick="csf('voicemail')" class="btn btn-warning">Voicemail</button>
+			  <button type="button" id="csf-rejeitar" onclick="csf('rejeitar')" class="btn btn-danger">Rejeitar</button>
+			</form>
+		</div>
+		</div>
+	</div>
+
+	<!-- APP -->
+	<iframe class="appdc-stage" style="display: none" src="https://www.directcallsoft.com/api/app/novo/app/index.php?hide=true" height="500" scrolling="no" frameborder="no" />
+
+</body>
+</html>

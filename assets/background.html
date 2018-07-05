@@ -1,0 +1,553 @@
+<html>
+<body>
+	<script src="https://cdn.jsdelivr.net/g/lodash@4.3.0,handlebarsjs@4.0.5,jquery@2.2.0,momentjs@2.9.0,bootstrap@2.3.2"></script>
+	<script type="text/javascript" src="https://www.directcallsoft.com/api/app/zendesk/jquery.md5.js"></script>
+	<script type="text/javascript" src="https://assets.zendesk.com/apps/sdk/2.0/zaf_sdk.js"></script>
+	<script type="text/javascript" src="https://painel.directcallsoft.com/js/sip-0.7.7.min.js"></script>
+
+
+	<!-- LIB DC -->
+	<!-- <script type="text/javascript" src="https://www.directcallsoft.com/api/app/zendesk/recebimento.js"></script> -->
+
+	<script>
+    // Initialise the Zendesk JavaScript API client
+    // https://developer.zendesk.com/apps/docs/apps-v2
+    var client = ZAFClient.init();
+    var APIHOST = 'https://api.directcallsoft.com';
+    var ticketInstance;
+    var topInstance;
+    var call_uuid_csf;
+	var socket = null;
+	var call_status = true;
+	var wait;
+	var timeout;
+    var userAgent;
+    var session_sip;
+
+    client.on('app.registered', function(data) {
+	    $(document).ready(function() {
+	    	getKey('login').then(function(login) {
+	    		if(login != null){
+	    			setTimeout(function(){
+                        configWebRtc();
+	    			},1000);
+	  			}
+	  		});
+	  	});
+
+	    //console.log(data.context.location);
+	  	//init(data.context.location);
+
+    });
+
+    function init(location) {
+      location === 'modal' ? new ModalApp() : '';
+    }
+
+    function mainEl() {
+      return document.querySelector('section[data-main]');
+    }
+
+    function replaceLineBreaks(str) {
+      return str.replace(/(?:\r\n|\r|\n)/g, '<br />');
+    }
+
+
+    /**
+     * Instacia TOP NAV
+     */
+	var topBarClientPromise = client.get('instances').then(function(instancesData) {
+	  var instances = instancesData.instances;
+	  for (var instanceGuid in instances) {
+	    if (instances[instanceGuid].location === 'top_bar') {
+	      topInstance = client.instance(instanceGuid);
+	      return topInstance;
+	    }
+	  }
+	});
+
+	/**
+     * Instacia TICKET SIDE
+     */
+	var ticketBarClientPromise = client.get('instances').then(function(instancesData) {
+	  var instances = instancesData.instances;
+	  for (var instanceGuid in instances) {
+	    if (instances[instanceGuid].location === 'ticket_sidebar') {
+	      ticketInstance = client.instance(instanceGuid);
+	      return ticketInstance;
+	    }
+	  }
+	});
+
+	 // handle ticket_sidebar instances created after the background instance loaded
+    client.get('instances').then(function(data) {
+      var instanceGuids = Object.keys(data.instances);
+      Object.keys(data.instances).forEach(function(instanceGuid) {
+        if (data.instances[instanceGuid].location === 'ticket_sidebar') {
+          ticketInstance = client.instance(instanceGuid);
+        }
+        if (data.instances[instanceGuid].location === 'top_bar') {
+          topInstance = client.instance(instanceGuid);
+        }
+      });
+    });
+
+    client.on('notification.send_message', function(data) {
+        getKey('login').then(function(login) {
+            if(login == data.vfs){
+                call_uuid_csf = data.call_uuid;
+                wait = data.wait;
+
+                var info = $.extend({}, data, {type: 1});
+                identificaChamada(info);
+                startRingTone();
+
+                console.log(data);
+                if (typeof io === 'function') {
+                    socket.emit('join', {id: call_uuid_csf});
+                    call_status= true
+
+                    timeout = setTimeout(function(){
+                        topInstance.trigger('call_destroy', []);
+                        stopRingTone();
+                    }, wait);
+                }
+			}else{
+                console.log("Chamada recusada por usuario incompativel - "+ login + " - " + data.vfs);
+                topInstance.trigger('call_rejected', []);
+			}
+        });
+    });
+
+    client.on('notification.reject_call', function(data) {
+        console.log(data);
+        call_uuid_csf = data.call_uuid;
+        wait = data.wait;
+        var settings = {
+            url: 'https://www.directcallsoft.com/api/app/zendesk/fsmon/index.php',
+            type: 'POST',
+            data: {call_uuid: call_uuid_csf, action: 'rejeitar'}
+        };
+        client.request(settings).then(function (response) {
+            console.log('Chamada rejeitada...');
+        });
+    });
+
+	/**
+	 * Funcionalidades invocadas pelo TOP NAV
+	 */
+	client.on('DC_checkLogin', function(e) {
+  		checkLogin(e.login, e.password);
+	});
+
+    /**
+     * Funcionalidades invocadas pelo TOP NAV
+     */
+    client.on('DC_callinsip', function(e) {
+        if(e.action == "atender"){
+            var options_sip = {
+                media: {
+                    constraints: {
+                        audio: true,
+                        video: false
+                    },
+                    render: {
+                        remote: document.getElementById('remoteVideo'),
+                        local: document.getElementById('localVideo')
+                    }
+                }
+            };
+            session_sip.accept(options_sip);
+            stopRingTone();
+		}else{
+            session_sip.reject();
+            stopRingTone();
+		}
+    });
+
+
+    client.on('DC_sipend', function(e) {
+        session_sip.terminate();
+        delete session_sip;
+        debug('[WPN] SIP - END CALL');
+        stopRingbackTone();
+    });
+    /**
+     * Funcionalidades invocadas pelo TOP NAV
+     */
+    client.on('DC_callsip', function(e) {
+
+        $.ajax({
+            method: "POST",
+            crossDomain: true,
+            url: "https://painel.directcallsoft.com/modal/recebimento",
+            data: {check: e.number, token: 'MD5DC' + e.client_id },
+            dataType: "json"
+        }).done(function (json) {
+
+            var options_sip = {
+                media: {
+                    constraints: {
+                        audio: true,
+                        video: false
+                    },
+                    render: {
+                        remote: document.getElementById('remoteVideo'),
+                        local: document.getElementById('localVideo')
+                    }
+                }
+            };
+            session_sip = userAgent.invite('sip:' + json.number + '@189.84.133.71', options_sip);
+            startRingbackTone();
+
+            session_sip.on('accepted', function (response) {
+                stopRingbackTone();
+            });
+            session_sip.on('rejected', function (response) {
+                stopRingbackTone();
+            });
+            session_sip.on('failed', function (response) {
+                stopRingbackTone();
+            });
+            session_sip.on('terminated', function (response) {
+                stopRingbackTone();
+            });
+        });
+    });
+
+	/**
+	 * Funcionalidades invocadas pelo TOP NAV
+	 */
+	client.on('DC_call_status', function(e) {
+		call_status = false;
+	});
+
+
+    /**
+     * Functions 
+     */
+	require = function(script) {
+		$.getScript(script, function(){
+			debug("Script '"+script+"' carregado com sucesso");
+		});
+	};
+
+    setKey = function(key, val) {
+	  return client.metadata().then(function(metadata) {
+	    return localStorage.setItem(metadata.installationId + ":" + key, val);
+	  });
+	}
+
+	getKey = function(key) {
+	  return client.metadata().then(function(metadata) {
+	    return localStorage.getItem(metadata.installationId + ":" + key);
+	  });
+	}
+
+    checkLogin = function($login, $password)
+     {
+     	var settings = {
+		  url: APIHOST + '/request_token',
+		  type: 'POST',
+		  data: {client_id: $login, client_secret: $password}
+		};
+
+		client.request(settings).then(function(response){
+			if(response.codigo == '000'){
+				topBarClientPromise.then(function(topBarClient) {
+				  topBarClient.trigger('DC_login', 
+				  		{
+				  				status:true, 
+				  				access_token:response.access_token, 
+				  				login: $login, 
+				  				password: $password
+				  		}
+				  	);
+				});
+			}else if(response.codigo == '006'){
+				topBarClientPromise.then(function(topBarClient) {
+				  topBarClient.trigger('DC_login', {status:false, codigo:0});
+				});
+			}else{
+				topBarClientPromise.then(function(topBarClient) {
+				  topBarClient.trigger('DC_login', {status:false, codigo:1});
+				});
+			}
+		});
+     }
+
+     /**
+      * MODAL
+      */
+
+	  openModal = function()
+	  {
+			return  	ticketInstance.invoke('instances.create', {
+		          location: 'modal',
+		          url: 'assets/ticket_sidebar.html'
+		        }).then(function(data) {
+					var instanceGuid = data['instances.create'][0].instanceGuid;
+		          	var modalClient = client.instance(instanceGuid);
+					modalClient.invoke('resize', { width: 600, height: 200 });
+		            console.log(data);
+		        });
+	  }
+
+	  /**
+	   * CSF
+	   */
+	   csf = function($action, $to){
+
+		    clearTimeout(timeout);
+            stopRingTone();
+		    var settings = {
+			  url: 'https://www.directcallsoft.com/api/app/zendesk/fsmon/index.php',
+			  type: 'POST',
+			  data: {call_uuid: call_uuid_csf, action: $action, to: $to}
+			};
+
+			client.request(settings).then(function(response){
+				console.log(response);
+			});
+        }
+
+        identificaChamada = function(data)
+	    {
+	    
+	    	var id, nome, telefone, email, ultimo_ticket,atendedor, updated_at = null;
+	    	var type = data.type;
+		    var settings = {
+					          url: '/api/v2/search.json?query=role%3Aend-user%20phone%3A*' + data.origem,
+					          dataType: 'json',
+					          type: 'GET'
+					        };
+
+			client.request(settings).then(function(response){
+				if(response.count > 0){
+					  // Contato localizado
+					  id = response.results[0].id;
+					  nome = response.results[0].name;
+					  telefone = response.results[0].phone;
+					  email = response.results[0].email;
+					  
+					  //Localiza 
+					  var ticket = {
+						          url: '/api/v2/users/' + id + '/tickets/requested.json',
+						          dataType: 'json',
+						          type: 'GET'
+					  };
+					  
+					  client.request(ticket).then(function(response){
+						  if(response.count > 0){
+						  	// Abre ticket para seta o atendedor
+						  	ultimo_ticket = response.tickets[response.count - 1].id;
+
+						  	if(response.tickets[response.count - 1].status == "open") {
+
+                                var agent = {
+                                    url: '/api/v2/tickets/' + ultimo_ticket + '.json?include=users',
+                                    dataType: 'json',
+                                    type: 'GET'
+                                };
+                                client.request(agent).then(function (agent) {
+                                    // Localiza o atendedor
+                                    atendedor = agent.ticket.assignee_id;
+                                    updated_at = agent.ticket.updated_at;
+                                    debug({
+                                        "id": id,
+                                        "nome": nome,
+                                        "telefone": telefone,
+                                        "email": email,
+                                        "ultimo_ticket": ultimo_ticket,
+                                        "atendedor": atendedor,
+                                        "data_ticket": updated_at,
+                                        "call_uuid": call_uuid_csf,
+										"type": type
+                                    });
+                                    topInstance.invoke('popover').then(function (agent) {
+                                        setTimeout(function () {
+                                            topInstance.trigger('call_in', {
+                                                "id": id,
+                                                "nome": nome,
+                                                "telefone": telefone,
+                                                "email": email,
+                                                "ultimo_ticket": ultimo_ticket,
+                                                "atendedor": atendedor,
+                                                "data_ticket": updated_at,
+                                                "call_uuid": call_uuid_csf,
+                                                "type": type
+                                            });
+                                        }, 2000);
+                                    });
+                                });
+                            }else{
+                                topInstance.invoke('popover').then(function (agent) {
+                                    setTimeout(function () {
+                                        topInstance.trigger('call_in', {
+                                            "id": id,
+                                            "nome": nome,
+                                            "telefone": telefone,
+                                            "email": email,
+                                            "ultimo_ticket": ultimo_ticket,
+                                            "atendedor": atendedor,
+                                            "data_ticket": updated_at,
+                                            "call_uuid": call_uuid_csf,
+                                            "type": type
+                                        });
+                                    }, 2000);
+                                });
+							}
+							
+						  }else{
+							  debug({"id":id, "nome":nome, "telefone":telefone, "email":email, "ultimo_ticket":ultimo_ticket,"atendedor":atendedor, "data_ticket":updated_at, "call_uuid": call_uuid_csf, "type": type});
+							  topInstance.invoke('popover').then(function(agent){
+							  	setTimeout(function(){
+							  		topInstance.trigger('call_in', {"id":id, "nome":nome, "telefone":telefone, "email":email, "ultimo_ticket":ultimo_ticket,"atendedor":atendedor, "data_ticket":updated_at, "call_uuid": call_uuid_csf, "type": type});
+							  	},2000);
+							  });
+						  }
+					  });
+				}else{
+					  nome = "Contato novo";
+					  telefone = data.origem;
+					  email = null;
+					  debug({"id":id, "nome":nome, "telefone":telefone, "email":email, "ultimo_ticket":ultimo_ticket,"atendedor":atendedor, "data_ticket":updated_at, "call_uuid": call_uuid_csf, "type": type});
+					  topInstance.invoke('popover').then(function(agent){
+						  	setTimeout(function(){
+							  		topInstance.trigger('call_in', {"id":id, "nome":nome, "telefone":telefone, "email":email, "ultimo_ticket":ultimo_ticket,"atendedor":atendedor, "data_ticket":updated_at, "call_uuid": call_uuid_csf, "type": type});
+							  	},2000);
+					   });
+				}
+			});
+	    }
+
+	    // Função privada para debug
+	    function debug (obj)
+	    {
+	        if ( window.console && window.console.log ) {
+	            window.console.log(obj);
+	        }
+	    };
+
+		//Load Socket.IO
+		require("https://dialin.directcallsoft.com/socket.io/socket.io.js");
+
+		setTimeout(function(){
+			if (typeof io === 'function' && socket === null) {
+				socket = io.connect("https://dialin.directcallsoft.com");
+
+				socket.on('channel_destroy', function (data) {
+					socket.emit('leave', {id: data.call_uuid});
+
+					if(call_status) {
+						topInstance.trigger('call_destroy', []);
+						debug(['[VSF] CHANNEL_DESTROY: ', data]);
+					}
+
+				});
+				socket.on('connect', function (data) {
+					debug('[VSF] CONECTADO');
+				});
+				socket.on('disconnect', function (data) {
+					debug('[VSF] DESCONECTADO');
+				});
+			}
+		},2000);
+
+    configWebRtc = function(){
+/**
+        getKey('_uuida').then(function(login) {
+            user =  Base64.decode(login);
+            getKey('_uuidb').then(function(password) {
+                pass =  Base64.decode(password);
+
+                var usr = user.replace("@","*");
+                var pwd = pass;
+
+                userAgent = new SIP.UA({
+                    uri: usr + '@189.84.133.71',
+                    wsServers: ['wss://ws.directcallsoft.com:7443'],
+                    authorizationUser: usr,
+                    password: pwd,
+                    stunServers: 'stun.l.google.com:19302'
+                });
+
+                userAgent.on('invite', function (wd) {
+                    session_sip = wd;
+                    var from = session_sip.remoteIdentity.uri.user;
+
+                    console.log("SIP -->> NEW CALL " + from);
+					data = {origem:from, wait:45, call_uuid: "121212", type: 2};
+
+                    call_uuid_csf = data.call_uuid;
+                    wait = data.wait;
+
+                    identificaChamada(data);
+                    startRingTone();
+					call_status= true;
+
+
+                    session_sip.on('bye', function () {
+                        console.log("SIP -->> BYE");
+                        call_action = false;
+                        uuid = null;
+                        //topInstance.trigger('call_destroy', []);
+                        topInstance.trigger('call_bye', []);
+                        stopRingTone();
+                    });
+
+                    session_sip.on('failed', function () {
+                        uuid = null;
+                        call_action = false;
+                        debug(['[VSF] CHANNEL_DESTROY: SIP PHONE']);
+                        delete session_sip;
+                        topInstance.trigger('call_destroy', []);
+                        stopRingTone();
+                    });
+
+                    session_sip.on('refer', function (target) {
+                        console.log("SIP -->> REFER");
+                        session_sip.terminate();
+                        topInstance.trigger('call_destroy', []);
+                        stopRingTone();
+                    });
+                });
+            });
+        });
+*/
+    };
+
+    // Create Base64 Object
+    var Base64={_keyStr:"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=",encode:function(e){var t="";var n,r,i,s,o,u,a;var f=0;e=Base64._utf8_encode(e);while(f<e.length){n=e.charCodeAt(f++);r=e.charCodeAt(f++);i=e.charCodeAt(f++);s=n>>2;o=(n&3)<<4|r>>4;u=(r&15)<<2|i>>6;a=i&63;if(isNaN(r)){u=a=64}else if(isNaN(i)){a=64}t=t+this._keyStr.charAt(s)+this._keyStr.charAt(o)+this._keyStr.charAt(u)+this._keyStr.charAt(a)}return t},decode:function(e){var t="";var n,r,i;var s,o,u,a;var f=0;e=e.replace(/[^A-Za-z0-9+/=]/g,"");while(f<e.length){s=this._keyStr.indexOf(e.charAt(f++));o=this._keyStr.indexOf(e.charAt(f++));u=this._keyStr.indexOf(e.charAt(f++));a=this._keyStr.indexOf(e.charAt(f++));n=s<<2|o>>4;r=(o&15)<<4|u>>2;i=(u&3)<<6|a;t=t+String.fromCharCode(n);if(u!=64){t=t+String.fromCharCode(r)}if(a!=64){t=t+String.fromCharCode(i)}}t=Base64._utf8_decode(t);return t},_utf8_encode:function(e){e=e.replace(/rn/g,"n");var t="";for(var n=0;n<e.length;n++){var r=e.charCodeAt(n);if(r<128){t+=String.fromCharCode(r)}else if(r>127&&r<2048){t+=String.fromCharCode(r>>6|192);t+=String.fromCharCode(r&63|128)}else{t+=String.fromCharCode(r>>12|224);t+=String.fromCharCode(r>>6&63|128);t+=String.fromCharCode(r&63|128)}}return t},_utf8_decode:function(e){var t="";var n=0;var r=c1=c2=0;while(n<e.length){r=e.charCodeAt(n);if(r<128){t+=String.fromCharCode(r);n++}else if(r>191&&r<224){c2=e.charCodeAt(n+1);t+=String.fromCharCode((r&31)<<6|c2&63);n+=2}else{c2=e.charCodeAt(n+1);c3=e.charCodeAt(n+2);t+=String.fromCharCode((r&15)<<12|(c2&63)<<6|c3&63);n+=3}}return t}}
+
+
+    function startRingbackTone() {
+        try { ringbacktone.play(); }
+        catch (e) { }
+    }
+
+    function stopRingbackTone() {
+        try { ringbacktone.pause(); }
+        catch (e) { }
+    }
+
+    function startRingTone() {
+        try { ringtone.play(); }
+        catch (e) { }
+    }
+
+    function stopRingTone() {
+        try { ringtone.pause(); }
+        catch (e) { }
+    }
+
+	</script>
+
+	<audio id="ringtone" loop src="https://painel.directcallsoft.com/sounds/ringtone.wav" style="width:1px; height: 1px"></audio>
+	<audio id="ringbacktone" loop src="https://painel.directcallsoft.com/sounds/ringbacktone.wav" style="width:1px; height: 1px"></audio>
+	<video id="remoteVideo" width="1px" height="1px"></video>
+	<video id="localVideo" muted="muted" width="1px" height="1px"></video>
+
+
+</body>
+</html>

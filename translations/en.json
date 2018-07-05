@@ -1,0 +1,18 @@
+{
+  "app": {
+    "description": "Funciona com telefone convencional ligado em qualquer linha telefônica",
+    "name": "Directcall APP",
+    "installation_instructions": "Instalação plug-and-play",
+  "long_description":"Funciona com telefone convencional ligado em qualquer linha telefônica (fixa, móvel ou IP), também em ramais DDR e IP, envio de SMS e Torpedo de Voz (TTS)"
+  },
+  "loading": "Carregando...",
+  "fetch": {
+    "done": "Concluido.",
+    "fail": "Falha critica, contate o suporte Directcall"
+  },
+  "id": "1000",
+  "email": "renato@directcall.com.br",
+  "name": "Renato Campoy",
+  "role": "Role",
+  "groups": "Groups"
+}
