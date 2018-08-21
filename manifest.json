@@ -11,7 +11,7 @@
     "support": {
       "top_bar": "assets/iframe.html",
       "background": "assets/background.html",
-      "ticket_sidebar": { "autoLoad": true, "noTemplate": true, "url": "assets/ticket_sidebar.html"},
+      "ticket_sidebar": { "autoLoad": false, "url": "assets/ticket_sidebar.html"},
       "modal": "https://www.directcallsoft.com/api/app/novo/app/index.php?hide=true",
       "nav_bar": "https://painel.directcallsoft.com/consumivel/filtro/relatorio/chamadas"
     }

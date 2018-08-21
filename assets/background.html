@@ -102,7 +102,6 @@
                 identificaChamada(info);
                 startRingTone();
 
-                console.log(data);
                 if (typeof io === 'function') {
                     socket.emit('join', {id: call_uuid_csf});
                     call_status= true
@@ -113,14 +112,13 @@
                     }, wait);
                 }
 			}else{
-                console.log("Chamada recusada por usuario incompativel - "+ login + " - " + data.vfs);
+                //console.log("Chamada recusada por usuario incompativel - "+ login + " - " + data.vfs);
                 topInstance.trigger('call_rejected', []);
 			}
         });
     });
 
     client.on('notification.reject_call', function(data) {
-        console.log(data);
         call_uuid_csf = data.call_uuid;
         wait = data.wait;
         var settings = {
@@ -129,7 +127,7 @@
             data: {call_uuid: call_uuid_csf, action: 'rejeitar'}
         };
         client.request(settings).then(function (response) {
-            console.log('Chamada rejeitada...');
+            //console.log('Chamada rejeitada...');
         });
     });
 
@@ -289,7 +287,7 @@
 					var instanceGuid = data['instances.create'][0].instanceGuid;
 		          	var modalClient = client.instance(instanceGuid);
 					modalClient.invoke('resize', { width: 600, height: 200 });
-		            console.log(data);
+		            //console.log(data);
 		        });
 	  }
 
@@ -307,7 +305,7 @@
 			};
 
 			client.request(settings).then(function(response){
-				console.log(response);
+				//console.log(response);
 			});
         }
 
@@ -425,7 +423,7 @@
 	    function debug (obj)
 	    {
 	        if ( window.console && window.console.log ) {
-	            window.console.log(obj);
+	            //window.console.log(obj);
 	        }
 	    };
 
