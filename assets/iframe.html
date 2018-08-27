@@ -120,7 +120,6 @@
             //Chamada Recebida
             client.on('call_destroy', function(e) {
                 showAppDC();
-                insertCommentTicket('falha', dataTicket);
             });
 
             //Chamada Recebida
@@ -136,7 +135,6 @@
             //Chamada Recebida
             client.on('call_in', function(e) {
                 client.invoke('popover');
-
 
                 // websip
                 $('#csf-atender').show();
@@ -155,13 +153,8 @@
                 client.invoke('resize', { width: '320px', height: '280px' });
                 populateDateCallIn(e);
                 dataTicket = e;
-                insertCommentTicket('nova', e);
 
             });
-
-            insertCommentTicket = function(tipo, data){
-                return true;
-            }
 
             populateDateCallIn = function(e){
                 call_uuid_csf = e.call_uuid;
@@ -196,16 +189,6 @@
                 //Link ticket
                 if(e.ultimo_ticket !== undefined){
                     $('#d-link').show();
-                    $('#d-link').unbind( "click" ).click(function(){
-                        var open_ticket = {
-                            url: '/api/v2/channels/voice/agents/' + agent_info.user.id + '/tickets/' + e.ultimo_ticket + '/display.json',
-                            dataType: 'json',
-                            type: 'POST',
-                        };
-                        client.request(open_ticket).then(function (response) {
-                            csf('atender');
-                        });
-                    });
                 }else{
                     $('#d-link').show();
                     $('#d-link').unbind( "click" ).click(function(){
@@ -256,7 +239,6 @@
                             client.invoke('popover', 'hide');
                             client.invoke('notify', 'Directcall Call In: + OK');
                             showAppDC();
-                            insertCommentTicket(action, dataTicket);
                         });
                     });
                 }else{
@@ -268,7 +250,6 @@
                         $('#csf-atender').hide();
                         $('#csf-voicemail').hide();
                         $('#csf-rejeitar').html('Finalizar Chamada');
-                        insertCommentTicket(action, dataTicket);
 					}else{
                         client.invoke('popover', 'hide');
                         client.invoke('notify', 'Directcall Call In: + OK');

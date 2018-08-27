@@ -2,8 +2,8 @@
   "app": {
     "description": "Ligação e SMS a partir de um clique no telefone de seus clientes.",
     "name": "Directcall APP",
-    "installation_instructions": "Após instalado o Directcall APP você pode entrar com seu usuário e senha Directcall ou solicitar um usuário e senha de teste em https://www.directcallsoft.com/api/testar/ para maiores informações de integração veja: http://doc.directcallsoft.com/pages/viewpage.action?pageId=47219023",
-    "long_description":"Acrescente novos recursos ao seu software com funcionalidades que não demandam hardware ou equipamentos. Ligue com um clique nos cadastros e relatórios do seu software, grave chamadas, envie SMS, acompanhe extratos e relatórios de atividades direto pelo seu software. Controle total de sua central, com relatórios detalhados e controle sobre colaboradores autorizados a ligar para celular, DDD, DDI, utilizar SMS, etc. Para maiores informações veja: http://directcall.com.br/produto/api/beneficios/"
+    "installation_instructions": "**Available only to agents with “Talk - Partner Edition” seats (see [zendesk.com/talk/pricing](https://www.zendesk.com/talk/pricing) \).** Após instalado o Directcall APP você pode entrar com seu usuário e senha Directcall ou solicitar um usuário e senha de teste em https://www.directcallsoft.com/api/testar/ para maiores informações de integração veja: http://doc.directcallsoft.com/pages/viewpage.action?pageId=47219023",
+    "long_description":"**Available only to agents with “Talk - Partner Edition” seats (see [zendesk.com/talk/pricing](https://www.zendesk.com/talk/pricing) \).** Acrescente novos recursos ao seu software com funcionalidades que não demandam hardware ou equipamentos. Ligue com um clique nos cadastros e relatórios do seu software, grave chamadas, envie SMS, acompanhe extratos e relatórios de atividades direto pelo seu software. Controle total de sua central, com relatórios detalhados e controle sobre colaboradores autorizados a ligar para celular, DDD, DDI, utilizar SMS, etc. Para maiores informações veja: http://directcall.com.br/produto/api/beneficios/"
   },
   "loading": "Carregando...",
   "fetch": {
